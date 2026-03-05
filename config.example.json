@@ -1,0 +1,19 @@
+{
+  "spreadsheet_path": "DonorPull Dec15 version.xlsm",
+  "spreadsheet_sheet": null,
+  "contributor_crosswalk_path": "contributor_company_crosswalk.csv",
+  "column_mapping": {
+    "company_name": "Company Name",
+    "election_year": "Year",
+    "rep_amount": "Republican",
+    "dem_amount": "Democratic"
+  },
+  "firebase": {
+    "credentials_path": "path/to/serviceAccountKey.json",
+    "companies_collection": "companies",
+    "company_name_field": "name",
+    "company_id_field": null
+  },
+  "fuzzy_match_threshold": 0.75,
+  "dry_run": false
+}
