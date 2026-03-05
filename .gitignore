@@ -1,0 +1,9 @@
+config.json
+*.json
+!config.example.json
+.venv/
+__pycache__/
+*.pyc
+.env
+.env.local
+ATT*.htm
