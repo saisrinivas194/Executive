@@ -10,6 +10,7 @@
   },
   "firebase": {
     "credentials_path": "path/to/serviceAccountKey.json",
+    "database_url": "https://your-project-id.firebaseio.com",
     "companies_collection": "companies",
     "company_name_field": "name",
     "company_id_field": null
