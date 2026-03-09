@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """
 Read exec donation data from spreadsheets, sum by company and year (rep/dem),
-and upload to Firestore.
+and upload to Firebase Realtime Database.
 
-Writes under: companies/<company_id>/records/<year> with exec.rep and exec.dem
+Realtime DB path (exactly):
+  companies -> company_id -> records -> year -> exec
+    - exec.rep: Republican total (number)
+    - exec.dem: Democratic total (number)
 """
 
 import argparse
@@ -14,7 +17,7 @@ from pathlib import Path
 import pandas as pd
 from rapidfuzz import fuzz, process
 import firebase_admin
-from firebase_admin import credentials, firestore
+from firebase_admin import credentials, db
 
 
 def load_config(config_path):
@@ -111,18 +114,21 @@ def sum_by_company_and_year(sheet):
     return grouped
 
 
-def fetch_companies_from_firestore(db, collection_name, name_field, id_field=None):
-    """Return list of (company_id, company_name) for every doc in the collection."""
-    coll = db.collection(collection_name)
+def fetch_companies_from_realtime(collection_name, name_field, id_field=None):
+    """Return list of (company_id, company_name) for every node under companies."""
+    ref = db.reference(collection_name)
+    snapshot = ref.get()
+    if not snapshot or not isinstance(snapshot, dict):
+        return []
     pairs = []
-    for doc in coll.stream():
-        doc_id = doc.id
-        data = doc.to_dict()
-        name = data.get(name_field) or data.get("name") or ""
+    for company_id, node in snapshot.items():
+        if not isinstance(node, dict):
+            continue
+        name = node.get(name_field) or node.get("name") or ""
         if not isinstance(name, str):
             name = str(name)
-        company_id = (data.get(id_field) if id_field else None) or doc_id
-        pairs.append((company_id, name.strip()))
+        use_id = (node.get(id_field) if id_field else None) or company_id
+        pairs.append((use_id, name.strip()))
     return pairs
 
 
@@ -143,8 +149,8 @@ def find_best_company_match(name_from_sheet, firebase_company_list, min_score_0_
     return firebase_company_list[index][0]
 
 
-def write_records_to_firestore(db, collection_name, rows, company_id_for_name, dry_run):
-    """Write each row to companies/<id>/records/<year> with exec.rep and exec.dem. Returns (written, skipped)."""
+def write_records_to_realtime(collection_name, rows, company_id_for_name, dry_run):
+    """Write to Realtime DB: companies -> company_id -> records -> year -> exec (rep, dem). Returns (written, skipped)."""
     written = 0
     skipped = 0
     total_rows = len(rows)
@@ -161,15 +167,11 @@ def write_records_to_firestore(db, collection_name, rows, company_id_for_name, d
             skipped += 1
             continue
 
-        record_ref = (
-            db.collection(collection_name)
-            .document(company_id)
-            .collection("records")
-            .document(year)
-        )
+        # Realtime DB path: companies -> company_id -> records -> year -> exec { rep, dem }
+        path_ref = db.reference(collection_name).child(company_id).child("records").child(year)
         payload = {"exec": {"rep": rep, "dem": dem}}
         if not dry_run:
-            record_ref.set(payload, merge=True)
+            path_ref.update(payload)
         written += 1
         if i % 100 == 0 or i == total_rows:
             print(f"  {i}/{total_rows} done", flush=True)
@@ -232,22 +234,25 @@ def main():
             })
             print(f"Sheet empty; using {len(rows)} companies from crosswalk (year={default_year}, rep=0, dem=0).")
 
-    # Connect to Firebase
+    # Connect to Firebase Realtime Database
     cred_path = config["firebase"]["credentials_path"]
+    database_url = config["firebase"].get("database_url")
     if not Path(cred_path).exists():
         print(f"Credentials file not found: {cred_path}", file=sys.stderr)
+        return 1
+    if not database_url:
+        print("firebase.database_url is required for Realtime Database.", file=sys.stderr)
         return 1
 
     if not firebase_admin._apps:
         cred = credentials.Certificate(cred_path)
-        firebase_admin.initialize_app(cred)
-    db = firestore.client()
+        firebase_admin.initialize_app(cred, {"databaseURL": database_url})
 
     collection_name = config["firebase"]["companies_collection"]
     name_field = config["firebase"]["company_name_field"]
     id_field = config["firebase"].get("company_id_field")
 
-    firebase_company_list = fetch_companies_from_firestore(db, collection_name, name_field, id_field)
+    firebase_company_list = fetch_companies_from_realtime(collection_name, name_field, id_field)
     print(f"Loaded {len(firebase_company_list)} companies from Firebase.")
 
     # Match sheet company names to Firebase company ids
@@ -268,8 +273,8 @@ def main():
         if len(unmatched_names) > 20:
             print(f"  ... and {len(unmatched_names) - 20} more.")
 
-    written, skipped = write_records_to_firestore(
-        db, collection_name, rows, company_id_for_name, dry_run
+    written, skipped = write_records_to_realtime(
+        collection_name, rows, company_id_for_name, dry_run
     )
     print(f"Written: {written}, Skipped: {skipped}.")
     return 0

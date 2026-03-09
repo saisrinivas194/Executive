@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Create company docs in Firestore from the crosswalk CSV (one doc per company name).
+Create company nodes in Firebase Realtime Database from the crosswalk CSV (one node per company name).
 Run once so the exec uploader has something to match against.
 """
 
@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pandas as pd
 import firebase_admin
-from firebase_admin import credentials, firestore
+from firebase_admin import credentials, db
 
 
 def load_config(config_path):
@@ -21,7 +21,7 @@ def load_config(config_path):
 
 
 def company_name_to_doc_id(company_name):
-    """Same company name always gets the same id. Safe for Firestore doc ids."""
+    """Same company name always gets the same id. Safe for Realtime Database keys."""
     normalized = company_name.strip().lower() or "unknown"
     digest = hashlib.sha256(normalized.encode("utf-8")).digest()[:12]
     return digest.hex()
@@ -73,21 +73,24 @@ def main():
         return 0
 
     cred_path = config["firebase"]["credentials_path"]
+    database_url = config["firebase"].get("database_url")
     if not Path(cred_path).exists():
         print(f"Credentials not found: {cred_path}", file=sys.stderr)
+        return 1
+    if not database_url:
+        print("firebase.database_url is required.", file=sys.stderr)
         return 1
 
     if not firebase_admin._apps:
         cred = credentials.Certificate(cred_path)
-        firebase_admin.initialize_app(cred)
-    db = firestore.client()
+        firebase_admin.initialize_app(cred, {"databaseURL": database_url})
 
     collection_name = config["firebase"]["companies_collection"]
     name_field = config["firebase"]["company_name_field"]
-    coll = db.collection(collection_name)
+    companies_ref = db.reference(collection_name)
 
     if args.dry_run:
-        print("DRY RUN: would create these company docs:")
+        print("DRY RUN: would create these company nodes:")
         for name in company_names[:25]:
             print(f"  {company_name_to_doc_id(name)} -> {name!r}")
         if len(company_names) > 25:
@@ -96,12 +99,11 @@ def main():
 
     count = 0
     for name in company_names:
-        doc_id = company_name_to_doc_id(name)
-        ref = coll.document(doc_id)
-        ref.set({name_field: name}, merge=True)
+        node_id = company_name_to_doc_id(name)
+        companies_ref.child(node_id).update({name_field: name})
         count += 1
 
-    print(f"Done. Wrote {count} company docs to {collection_name}.")
+    print(f"Done. Wrote {count} company nodes to {collection_name}.")
     return 0
 
 
