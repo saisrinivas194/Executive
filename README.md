@@ -1,23 +1,22 @@
 # Execuitive — Lindsey exec data uploader
 
-Parses company executive donation data from Lindsey's spreadsheets, aggregates by **election cycle** and **party** (Republican / Democratic), and uploads to **Firebase** (Firestore).
+Parses company executive donation data from Lindsey's spreadsheets, aggregates by **election cycle** and **party** (Republican / Democratic), and uploads to **Firebase Realtime Database**.
 
-## Firebase structure
+## Firebase structure (Realtime Database only)
 
-Data is written under each company as:
+The uploader writes **only** to Firebase Realtime Database (not Firestore). The path format is:
 
 ```
-companies/[company_id]
-  └── records (subcollection)
-        └── [year] (document)
-              └── exec
-                    ├── rep: amount (number)
-                    └── dem: amount (number)
+companies -> company_id -> records -> year -> exec
 ```
 
-- **company_id** comes from your Firebase `companies` collection (document IDs or a configured id field).
-- **year** is the election cycle year (e.g. `"2020"`, `"2022"`).
-- **rep** / **dem** are the aggregated dollar amounts for that company and year.
+Where:
+- **companies** is the root key (config: `firebase.companies_collection`, default `"companies"`).
+- **company_id** is the key for each company (from bootstrap or your existing data).
+- **records** is a fixed segment; under it, each **year** (e.g. `"2024"`) holds that cycle’s data.
+- **exec** is an object with **rep** (Republican total, number) and **dem** (Democratic total, number).
+
+So each company has `companies/<company_id>/records/<year>/exec` with Republican and Democratic totals.
 
 ## Setup
 
@@ -35,6 +34,7 @@ companies/[company_id]
    - Copy `config.example.json` to `config.json`.
    - Set `spreadsheet_path` to the path of Lindsey's file (`.xlsx`, `.xls`, or `.csv`).
    - Set `firebase.credentials_path` to your Firebase service account JSON path.
+   - Set `firebase.database_url` to your Realtime Database URL (e.g. `https://your-project.firebaseio.com`).
    - Adjust `column_mapping` to match the spreadsheet column names for:
      - **Company name** (or **contributor name** if using the crosswalk)
      - Election year (e.g. `"Year"`)
@@ -44,19 +44,19 @@ companies/[company_id]
 
 3. **Firebase**
 
-   - Use a **Firestore** project; the script uses the Firestore client.
-   - Ensure the `companies` collection exists and has documents whose **names** can be fuzzy-matched to the spreadsheet company names. Document IDs (or `company_id_field` if set) are used as `company_id` in the path above.
+   - Use a **Realtime Database** project. Set `firebase.database_url` in config (e.g. `https://your-project.firebaseio.com`).
+   - Ensure `companies` exists in the Realtime Database with nodes whose **names** can be fuzzy-matched to the spreadsheet. Each company key (or `company_id_field` if set) is used as `company_id` in the path above.
 
 ## Bootstrap companies (first time)
 
-If your Firestore `companies` collection is empty, create company documents from the crosswalk once:
+If your Realtime Database has no `companies` node (or it's empty), create company nodes from the crosswalk once:
 
 ```bash
 python bootstrap_companies.py --dry-run   # preview
 python bootstrap_companies.py             # create companies in Firebase
 ```
 
-This reads unique company names from `contributor_crosswalk_path` and writes one document per company with a `name` field. Then run the exec uploader to match and write records.
+This reads unique company names from `contributor_crosswalk_path` and writes one node per company under `companies` with a `name` field. Then run the exec uploader to match and write records.
 
 ## Running
 
@@ -95,8 +95,9 @@ Spreadsheet company names (from the sheet or from the crosswalk) are matched to 
 | `contributor_crosswalk_path` | Optional. Path to CSV with `contributor_name` and `company_name` to resolve contributors to companies. |
 | `column_mapping` | Maps internal keys to spreadsheet column headers: `company_name` or `contributor_name`, `election_year`, `rep_amount`, `dem_amount`. |
 | `firebase.credentials_path` | Path to Firebase service account JSON. |
-| `firebase.companies_collection` | Firestore collection name for companies (default `companies`). |
-| `firebase.company_name_field` | Field in each company document that holds the display name for matching (e.g. `name`). |
-| `firebase.company_id_field` | Optional: use this field as `company_id` instead of the document ID. |
+| `firebase.database_url` | Realtime Database URL (e.g. `https://your-project.firebaseio.com`). |
+| `firebase.companies_collection` | Key for companies in Realtime DB (default `companies`). |
+| `firebase.company_name_field` | Field in each company node for the display name (e.g. `name`). |
+| `firebase.company_id_field` | Optional: use this field as `company_id` instead of the node key. |
 | `fuzzy_match_threshold` | Min similarity 0–1 for accepting a match (default `0.75`). |
 | `dry_run` | If `true`, no Firebase writes (same as `--dry-run`). |
